@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+
+	"github.com/joho/godotenv"
 )
 
 type Config struct {
@@ -16,6 +18,12 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
+	// Load .env file
+	err := godotenv.Load()
+	if err != nil {
+		fmt.Println("Warning: Error loading .env file")
+	}
+
 	// Load config from JSON file
 	cfg, err := loadConfigFile()
 	if err != nil {
