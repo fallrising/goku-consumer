@@ -1,38 +1,87 @@
 package processor
 
 import (
+	"encoding/json"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/fallrising/goku-consumer/internal/api"
 	"github.com/fallrising/goku-consumer/pkg/models"
 )
 
-func ProcessURL(url string) (*models.URLInfo, error) {
-	resp, err := http.Get(url)
+type Message struct {
+	MessageType string   `json:"messageType"`
+	URLs        []string `json:"urls,omitempty"`
+	FileType    string   `json:"fileType,omitempty"`
+	FileURL     string   `json:"fileUrl,omitempty"`
+	FileName    string   `json:"fileName,omitempty"`
+}
+
+func ProcessURL(urlString string) (*models.URLInfo, error) {
+	parsedURL, err := url.Parse(urlString)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse URL: %w", err)
+	}
+
+	if parsedURL.Host == "api.telegram.org" {
+		return &models.URLInfo{
+			URL:         urlString,
+			Title:       "TG BOT",
+			Description: "last 4 digits of identity number;",
+			Tags:        []string{},
+		}, nil
+	}
+
+	client := &http.Client{
+		Timeout: 1500 * time.Millisecond,
+	}
+
+	req, err := http.NewRequest("GET", urlString, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("User-Agent", "GokuConsumer/1.0")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch URL: %w", err)
 	}
 	defer resp.Body.Close()
 
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
-	if err != nil {
-		return nil, err
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	title := doc.Find("title").First().Text()
-	description := doc.Find("meta[name=description]").AttrOr("content", "")
+	// Limit the response body to 1MB to prevent excessive memory usage
+	bodyReader := io.LimitReader(resp.Body, 1024*1024)
+
+	doc, err := goquery.NewDocumentFromReader(bodyReader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse HTML: %w", err)
+	}
+
+	title := strings.TrimSpace(doc.Find("title").First().Text())
+	description := strings.TrimSpace(doc.Find("meta[name=description]").AttrOr("content", ""))
 
 	var tags []string
 	doc.Find("meta[name=keywords]").Each(func(i int, s *goquery.Selection) {
 		content, _ := s.Attr("content")
-		tags = append(tags, strings.Split(content, ",")...)
+		for _, tag := range strings.Split(content, ",") {
+			tag = strings.TrimSpace(tag)
+			if tag != "" {
+				tags = append(tags, tag)
+			}
+		}
 	})
 
 	return &models.URLInfo{
-		URL:         url,
+		URL:         urlString,
 		Title:       title,
 		Description: description,
 		Tags:        tags,
@@ -40,14 +89,27 @@ func ProcessURL(url string) (*models.URLInfo, error) {
 }
 
 func ProcessMessage(msg []byte, apiClient *api.Client) error {
-	content := string(msg)
-	urls := extractURLs(content)
+	var message Message
+	if err := json.Unmarshal(msg, &message); err != nil {
+		return err
+	}
+
+	var urls []string
+	switch message.MessageType {
+	case "url":
+		urls = message.URLs
+	case "file":
+		urls = []string{message.FileURL}
+	default:
+		log.Printf("Unknown message type: %s", message.MessageType)
+		return nil
+	}
 
 	var batch []models.URLInfo
-	for _, url := range urls {
-		info, err := ProcessURL(url)
+	for _, targetURL := range urls {
+		info, err := ProcessURL(targetURL)
 		if err != nil {
-			log.Printf("Error processing URL %s: %v", url, err)
+			log.Printf("Error processing URL %s: %v", targetURL, err)
 			continue
 		}
 		batch = append(batch, *info)
@@ -67,17 +129,4 @@ func ProcessMessage(msg []byte, apiClient *api.Client) error {
 	}
 
 	return nil
-}
-
-func extractURLs(content string) []string {
-	// This is a simple implementation. You might want to use a more robust method,
-	// such as a regular expression, to extract URLs.
-	words := strings.Fields(content)
-	var urls []string
-	for _, word := range words {
-		if strings.HasPrefix(word, "http://") || strings.HasPrefix(word, "https://") {
-			urls = append(urls, word)
-		}
-	}
-	return urls
 }
