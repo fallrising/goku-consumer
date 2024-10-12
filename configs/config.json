@@ -1,7 +1,0 @@
-{
-	"mqtt_broker": "tcp://localhost:1883",
-	"client_id": "goku-consumer",
-	"topic": "urls",
-	"batch_size": 10,
-	"api_endpoint": "http://api.example.com/upload"
-}

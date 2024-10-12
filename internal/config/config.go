@@ -18,19 +18,16 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
-	// Load .env file
-	err := godotenv.Load()
-	if err != nil {
-		fmt.Println("Warning: Error loading .env file")
-	}
+	// 1. Load .env file if it exists (optional, for development convenience)
+	_ = godotenv.Load() // Ignore error as .env is optional
 
-	// Load config from JSON file
+	// 2. Load default config from JSON file
 	cfg, err := loadConfigFile()
 	if err != nil {
 		return nil, fmt.Errorf("error loading config file: %v", err)
 	}
 
-	// Override with environment variables if they exist
+	// 3. Override with environment variables if they exist
 	if envValue := os.Getenv("MQTT_BROKER"); envValue != "" {
 		cfg.MQTTBroker = envValue
 	}
@@ -55,7 +52,7 @@ func Load() (*Config, error) {
 }
 
 func loadConfigFile() (*Config, error) {
-	file, err := os.Open("configs/config.json")
+	file, err := os.Open("config.json")
 	if err != nil {
 		return nil, err
 	}
